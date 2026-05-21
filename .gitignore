@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.env
+*.venv
+venv/
+env/
+
+# Conda
+.conda/
+
+# VS Code
+.vscode/
+
+# Live data CSVs (auto-generated)
+*_live.csv
+*_1D_live.csv
+*_1W_live.csv
+*_1M_live.csv
+*_1Y_live.csv
+*_5Y_live.csv
+
+# OS
+.DS_Store
+Thumbs.db
