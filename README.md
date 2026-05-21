@@ -79,7 +79,7 @@ python -m uvicorn main:app --reload
 ### 4️⃣ Open in browser
 
 ```
-http://127.0.0.1:8000/docs
+https://stockme-h15m.onrender.com
 ```
 
 ---
