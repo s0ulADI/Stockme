@@ -1,16 +1,31 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from nsetools import Nse
 import pandas as pd
 import os
+import time
 from datetime import datetime, time as dtime, date
 from zoneinfo import ZoneInfo
 from sklearn.ensemble import RandomForestRegressor
 import yfinance as yf
 import requests
 from functools import lru_cache
+
+# Simple TTL cache for stock price data (60s expiry)
+_stock_cache: dict = {}  # symbol -> {"data": ..., "ts": float}
+STOCK_CACHE_TTL = 60  # seconds
+
+def get_cached_stock(symbol: str):
+    entry = _stock_cache.get(symbol)
+    if entry and (time.time() - entry["ts"]) < STOCK_CACHE_TTL:
+        return entry["data"]
+    return None
+
+def set_cached_stock(symbol: str, data: dict):
+    _stock_cache[symbol] = {"data": data, "ts": time.time()}
 
 app = FastAPI()
 app.add_middleware(
@@ -32,7 +47,19 @@ def serve_frontend():
         raise HTTPException(status_code=404, detail="Frontend index.html not found")
     return FileResponse(html_path, media_type="text/html")
 
-nse = Nse()
+# Lazy-initialize nsetools so the server doesn't crash on startup
+# if nseindia.com is temporarily unreachable.
+_nse_instance = None
+
+def get_nse():
+    global _nse_instance
+    if _nse_instance is None:
+        try:
+            _nse_instance = Nse()
+        except Exception as e:
+            print(f"[WARN] nsetools init failed: {e}")
+            _nse_instance = None
+    return _nse_instance
 
 MARKET_TZ = ZoneInfo("Asia/Kolkata")
 
@@ -206,6 +233,9 @@ def fetch_stock(symbol):
     symbol = symbol.upper()
     yf_info = get_yf_info(symbol)
     try:
+        nse = get_nse()
+        if nse is None:
+            raise Exception("NSE session unavailable")
         quote = nse.get_quote(symbol)
         price = float(quote.get("lastPrice") or quote.get("close") or 0)
         change = float(quote.get("change") or 0)
@@ -300,6 +330,11 @@ def get_stock(symbol: str, force: bool = False):
     if not is_market_open() and not force:
         return {"status": "Market Closed"}
 
+    # Return cached result if fresh (avoids hammering yfinance)
+    cached = get_cached_stock(symbol)
+    if cached:
+        return {"status": "Live (cached)", "data": cached}
+
     stock = fetch_stock(symbol)
 
     now = datetime.now(MARKET_TZ).strftime("%H:%M:%S")
@@ -330,6 +365,9 @@ def get_stock(symbol: str, force: bool = False):
     save_to_csv(symbol, {"time": now, "symbol": symbol, "price": stock["price"]})
 
     check_alerts(symbol, stock["price"])
+
+    # Cache the response
+    set_cached_stock(symbol, data)
 
     return {"status": "Live", "data": data}
 
